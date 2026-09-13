@@ -45,7 +45,7 @@ def _csv_ints(name: str) -> set[int]:
 
 
 # ============================================================
-# TELEGRAM BOT
+# TELEGRAM
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -58,7 +58,6 @@ OWNER_ID = _int("OWNER_ID", 0)
 
 ALLOWED_USERS = _csv_ints("ALLOWED_USERS")
 
-# Owner is always allowed.
 if OWNER_ID:
     ALLOWED_USERS.add(OWNER_ID)
 
@@ -83,8 +82,6 @@ COOKIE_DIR = Path(
     )
 )
 
-
-# Create directories if they do not exist.
 DOWNLOAD_DIR.mkdir(
     parents=True,
     exist_ok=True
@@ -100,7 +97,6 @@ COOKIE_DIR.mkdir(
 # DOWNLOAD SETTINGS
 # ============================================================
 
-# Maximum number of videos downloading at the same time.
 MAX_CONCURRENT = max(
     1,
     _int("MAX_CONCURRENT", 2)
@@ -111,12 +107,10 @@ MAX_CONCURRENT = max(
 # JOB TIMEOUT
 # ============================================================
 
-# Maximum lifetime of one overall download job.
+# 6 hours.
 #
-# 21600 seconds = 6 hours.
-#
-# This is NOT the maximum video length or file size.
-# It is simply a safety timeout for a stuck job.
+# This is the maximum time allowed for an individual
+# download/upload operation.
 JOB_TIMEOUT = max(
     60,
     _int("JOB_TIMEOUT", 21600)
@@ -127,9 +121,6 @@ JOB_TIMEOUT = max(
 # LARGE FILE SPLITTING
 # ============================================================
 
-# Telegram upload splitting threshold.
-#
-# 1.9 GB in binary GiB units.
 SPLIT_SIZE_GB = float(
     os.getenv(
         "SPLIT_SIZE_GB",
@@ -143,7 +134,7 @@ SPLIT_SIZE_BYTES = int(
 
 
 # ============================================================
-# FILENAMES
+# FILENAME
 # ============================================================
 
 MAX_FILENAME_LEN = max(
@@ -167,9 +158,8 @@ SELF_PING_ENABLED = os.getenv(
 )
 
 
-# Ping interval in seconds.
-#
-# 600 seconds = 10 minutes.
+# IMPORTANT:
+# Keep this at 60 seconds for this project.
 SELF_PING_INTERVAL = max(
     60,
     _int(
@@ -177,3 +167,14 @@ SELF_PING_INTERVAL = max(
         60
     )
 )
+
+
+# ============================================================
+# YOUTUBE PO TOKEN PROVIDER
+# ============================================================
+
+# Local bgutil provider started inside the same Render container.
+POT_PROVIDER_URL = os.getenv(
+    "POT_PROVIDER_URL",
+    "http://127.0.0.1:4416"
+).strip()
