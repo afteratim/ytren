@@ -15,137 +15,185 @@ class YoutubeService:
     def __init__(self, download_dir: Path):
         self.download_dir = download_dir
 
-    # ---------------------------------------------------------
-    # COOKIE
-    # ---------------------------------------------------------
+    # =========================================================
+    # COOKIE FILE
+    # =========================================================
 
     def _cookie_file(self, user_id):
-        path = (
+        cookie_path = (
             Path(os.getenv("COOKIE_DIR", "/tmp/ytaudio_cookies"))
             / str(user_id)
             / "cookies.txt"
         )
 
-        return path if path.exists() else None
+        if cookie_path.exists() and cookie_path.is_file():
+            return cookie_path
 
-    # ---------------------------------------------------------
-    # COMMON YOUTUBE OPTIONS
-    # ---------------------------------------------------------
+        return None
 
-    def _youtube_extractor_args(self, use_cookie=False):
+    # =========================================================
+    # YOUTUBE EXTRACTOR ARGUMENTS
+    # =========================================================
+
+    def _youtube_extractor_args(self):
         """
-        Current YouTube extraction strategy.
+        YouTube client configuration.
 
-        We deliberately do NOT use:
-            web
-            web_creator
+        mweb:
+            Used with the bgutil PO-token provider.
 
-        as the only client because current YouTube PO-token/SABR
-        changes can leave no downloadable formats.
+        web_embedded:
+            Fallback for videos available through embedded player.
 
-        mweb is used with the bgutil PO-token provider.
-        web_embedded is kept as a fallback for embeddable videos.
+        default:
+            Additional fallback client.
         """
 
-        args = {
+        return {
             "youtube": {
-                "player_client": ["mweb", "web_embedded", "default"],
+                "player_client": [
+                    "mweb",
+                    "web_embedded",
+                    "default",
+                ]
             }
         }
 
-        return args
+    # =========================================================
+    # COMMON YT-DLP OPTIONS
+    # =========================================================
 
-    def _base_opts(self, user_id, outtmpl, skip_download=False):
+    def _base_opts(
+        self,
+        user_id,
+        outtmpl,
+        skip_download=False,
+    ):
         opts = {
             # -------------------------------------------------
             # General
             # -------------------------------------------------
+
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
 
             # -------------------------------------------------
-            # Audio
+            # Audio selection
             # -------------------------------------------------
             #
-            # Prefer a real HTTP audio stream.
+            # First preference:
+            # best audio format which has a normal HTTP
+            # protocol.
             #
-            # The [protocol^=http] condition prevents yt-dlp
-            # from selecting a SABR-only format that cannot be
-            # downloaded directly.
+            # Then:
+            # normal bestaudio.
             #
+            # Finally:
+            # best available format.
+            #
+
             "format": (
                 "(bestaudio)[protocol^=http]/"
                 "bestaudio/"
                 "best"
             ),
 
-            # Do NOT convert audio.
-            # We want the original/best available container.
+            # -------------------------------------------------
+            # Do NOT convert audio
+            # -------------------------------------------------
+
             "postprocessors": [],
 
             # -------------------------------------------------
             # Output
             # -------------------------------------------------
+
             "outtmpl": outtmpl,
+
             "restrictfilenames": False,
+
             "overwrites": True,
+
             "continuedl": True,
 
             # -------------------------------------------------
-            # YouTube
+            # Playlist
             # -------------------------------------------------
+
             "noplaylist": False,
+
             "ignoreerrors": False,
 
             # -------------------------------------------------
-            # JavaScript
+            # JavaScript runtime
             # -------------------------------------------------
             #
-            # Node is installed in our Docker image.
+            # Node.js is installed in Dockerfile.
             #
+
             "js_runtimes": {
                 "node": {}
+            },
+
+            # -------------------------------------------------
+            # YouTube extractor
+            # -------------------------------------------------
+
+            "extractor_args": self._youtube_extractor_args(),
+
+            # -------------------------------------------------
+            # Remote EJS components
+            # -------------------------------------------------
+
+            "remote_components": {
+                "ejs:github"
             },
 
             # -------------------------------------------------
             # PO Token provider
             # -------------------------------------------------
             #
-            # bgutil HTTP server is running on localhost:4416.
+            # bgutil HTTP server:
             #
-            "extractor_args": self._youtube_extractor_args(
-                use_cookie=use_cookie
-            ),
+            # 127.0.0.1:4416
+            #
 
             # -------------------------------------------------
-            # EJS / remote components
+            # Network
             # -------------------------------------------------
-            #
-            # Current yt-dlp can use its EJS solver with a JS
-            # runtime. Keeping this enabled improves current
-            # YouTube compatibility.
-            #
-            "remote_components": {
-                "ejs:github"
-            },
 
-            # -------------------------------------------------
-            # Networking
-            # -------------------------------------------------
             "socket_timeout": 30,
+
             "retries": 5,
+
             "fragment_retries": 5,
 
-            # Don't abort the whole playlist because a single
-            # video has an extraction problem.
             "skip_unavailable_fragments": True,
         }
+
+        # -----------------------------------------------------
+        # Tell bgutil where its HTTP server is
+        # -----------------------------------------------------
+
+        opts["extractor_args"][
+            "youtubepot-bgutilhttp"
+        ] = {
+            "base_url": POT_PROVIDER_URL
+        }
+
+        # -----------------------------------------------------
+        # Cookie
+        # -----------------------------------------------------
 
         cookie = self._cookie_file(user_id)
 
         if cookie:
             opts["cookiefile"] = str(cookie)
+
+        # -----------------------------------------------------
+        # Metadata-only extraction
+        # -----------------------------------------------------
 
         if skip_download:
             opts["skip_download"] = True
@@ -153,23 +201,19 @@ class YoutubeService:
 
         return opts
 
-    # ---------------------------------------------------------
-    # EXTRACTION
-    # ---------------------------------------------------------
+    # =========================================================
+    # GET VIDEO / PLAYLIST INFORMATION
+    # =========================================================
 
     async def get_info(self, url, user_id):
         """
-        Extract metadata first.
-
-        We use the same YouTube configuration as the actual
-        downloader so that the metadata extraction and download
-        don't use completely different clients.
+        Extract YouTube information without downloading.
         """
 
         def work():
             opts = self._base_opts(
-                user_id,
-                "%(title)s.%(ext)s",
+                user_id=user_id,
+                outtmpl="%(title)s.%(ext)s",
                 skip_download=True,
             )
 
@@ -181,9 +225,9 @@ class YoutubeService:
 
         return await asyncio.to_thread(work)
 
-    # ---------------------------------------------------------
+    # =========================================================
     # DOWNLOAD ONE VIDEO
-    # ---------------------------------------------------------
+    # =========================================================
 
     async def download_video(
         self,
@@ -200,58 +244,79 @@ class YoutubeService:
             exist_ok=True,
         )
 
+        # -----------------------------------------------------
+        # Playlist filename prefix
+        # -----------------------------------------------------
+
         marker = (
             f"{playlist_index:02d} - "
             if playlist_index
             else ""
         )
 
+        # -----------------------------------------------------
+        # Temporary yt-dlp filename
+        # -----------------------------------------------------
+
         outtmpl = str(
             output_dir / "%(title)s.%(ext)s"
         )
 
-        cookie = self._cookie_file(user_id)
+        # =====================================================
+        # PROGRESS HOOK
+        # =====================================================
 
-        # -----------------------------------------------------
-        # Progress hook
-        # -----------------------------------------------------
+        def hook(data):
+            # -------------------------------------------------
+            # Cancellation
+            # -------------------------------------------------
 
-        def hook(d):
             if cancel_event.is_set():
                 raise DownloadCancelled()
 
-            status = d.get("status")
+            status = data.get("status")
+
+            # -------------------------------------------------
+            # Downloading
+            # -------------------------------------------------
 
             if status == "downloading":
+
                 total = (
-                    d.get("total_bytes")
-                    or d.get("total_bytes_estimate")
+                    data.get("total_bytes")
+                    or data.get("total_bytes_estimate")
                     or 0
                 )
 
-                done = d.get(
+                downloaded = data.get(
                     "downloaded_bytes",
                     0,
                 )
 
-                percent = (
-                    (done * 100 / total)
-                    if total
-                    else 0
-                )
+                if total:
+                    percent = (
+                        downloaded * 100 / total
+                    )
+                else:
+                    percent = 0
 
                 progress_cb(
                     percent,
-                    done,
+                    downloaded,
                     total,
-                    d.get("speed"),
-                    d.get("eta"),
+                    data.get("speed"),
+                    data.get("eta"),
                 )
 
+            # -------------------------------------------------
+            # Finished
+            # -------------------------------------------------
+
             elif status == "finished":
+
                 total = (
-                    d.get("total_bytes")
-                    or d.get("total_bytes_estimate")
+                    data.get("total_bytes")
+                    or data.get("total_bytes_estimate")
                     or 0
                 )
 
@@ -263,33 +328,43 @@ class YoutubeService:
                     0,
                 )
 
-        # -----------------------------------------------------
-        # yt-dlp options
-        # -----------------------------------------------------
+        # =====================================================
+        # YT-DLP OPTIONS
+        # =====================================================
 
         opts = self._base_opts(
-            user_id,
-            outtmpl,
+            user_id=user_id,
+            outtmpl=outtmpl,
             skip_download=False,
         )
 
+        # This method downloads ONE video only.
         opts["noplaylist"] = True
-        opts["progress_hooks"] = [hook]
 
-        # We don't want yt-dlp to perform arbitrary audio
-        # conversion.
+        opts["progress_hooks"] = [
+            hook
+        ]
+
+        # No audio conversion.
         opts["postprocessors"] = []
 
-        # -----------------------------------------------------
-        # Download
-        # -----------------------------------------------------
+        # =====================================================
+        # ACTUAL DOWNLOAD
+        # =====================================================
 
         def work():
+
             with yt_dlp.YoutubeDL(opts) as ydl:
+
                 info = ydl.extract_info(
                     url,
                     download=True,
                 )
+
+                if not info:
+                    raise RuntimeError(
+                        "yt-dlp returned no video information."
+                    )
 
                 requested = Path(
                     ydl.prepare_filename(info)
@@ -301,14 +376,19 @@ class YoutubeService:
             work
         )
 
+        # =====================================================
+        # CHECK CANCELLATION
+        # =====================================================
+
         if cancel_event.is_set():
             raise DownloadCancelled()
 
-        # -----------------------------------------------------
-        # Find downloaded file
-        # -----------------------------------------------------
+        # =====================================================
+        # FIND DOWNLOADED FILE
+        # =====================================================
 
         if not requested.exists():
+
             candidates = [
                 p
                 for p in output_dir.glob("*")
@@ -325,9 +405,9 @@ class YoutubeService:
                 key=lambda p: p.stat().st_mtime,
             )
 
-        # -----------------------------------------------------
-        # Final filename
-        # -----------------------------------------------------
+        # =====================================================
+        # FINAL FILENAME
+        # =====================================================
 
         from utils.files import safe_filename
 
@@ -343,6 +423,10 @@ class YoutubeService:
 
         final = output_dir / final_name
 
+        # =====================================================
+        # RENAME
+        # =====================================================
+
         if requested.resolve() != final.resolve():
 
             if final.exists():
@@ -352,9 +436,9 @@ class YoutubeService:
 
         return final, info
 
-    # ---------------------------------------------------------
+    # =========================================================
     # PLAYLIST
-    # ---------------------------------------------------------
+    # =========================================================
 
     async def download_playlist(
         self,
@@ -364,18 +448,30 @@ class YoutubeService:
         worker_submit,
         cancel_event,
     ):
+        """
+        Download playlist entries.
+
+        Actual concurrent worker management is handled by
+        services/jobs.py.
+        """
+
         entries = [
             entry
-            for entry in (info.get("entries") or [])
+            for entry in (
+                info.get("entries") or []
+            )
             if entry
         ]
 
         results = []
 
+        total = len(entries)
+
         for index, entry in enumerate(
             entries,
             1,
         ):
+
             if cancel_event.is_set():
                 break
 
@@ -393,7 +489,7 @@ class YoutubeService:
             result = await worker_submit(
                 url,
                 index,
-                len(entries),
+                total,
                 title,
             )
 
