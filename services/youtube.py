@@ -21,7 +21,12 @@ class YoutubeService:
 
     def _cookie_file(self, user_id):
         cookie_path = (
-            Path(os.getenv("COOKIE_DIR", "/tmp/ytaudio_cookies"))
+            Path(
+                os.getenv(
+                    "COOKIE_DIR",
+                    "/tmp/ytaudio_cookies",
+                )
+            )
             / str(user_id)
             / "cookies.txt"
         )
@@ -37,16 +42,16 @@ class YoutubeService:
 
     def _youtube_extractor_args(self):
         """
-        YouTube client configuration.
+        Current YouTube client configuration.
 
         mweb:
-            Used with the bgutil PO-token provider.
+            Primary client used with the bgutil PO-token provider.
 
         web_embedded:
-            Fallback for videos available through embedded player.
+            Fallback for videos that support the embedded player.
 
         default:
-            Additional fallback client.
+            Additional fallback.
         """
 
         return {
@@ -79,18 +84,12 @@ class YoutubeService:
             "noprogress": True,
 
             # -------------------------------------------------
-            # Audio selection
+            # BEST AVAILABLE AUDIO
             # -------------------------------------------------
             #
-            # First preference:
-            # best audio format which has a normal HTTP
-            # protocol.
+            # Prefer a normal HTTP audio stream.
             #
-            # Then:
-            # normal bestaudio.
-            #
-            # Finally:
-            # best available format.
+            # Do NOT force MP3 conversion.
             #
 
             "format": (
@@ -100,7 +99,7 @@ class YoutubeService:
             ),
 
             # -------------------------------------------------
-            # Do NOT convert audio
+            # No conversion
             # -------------------------------------------------
 
             "postprocessors": [],
@@ -110,11 +109,8 @@ class YoutubeService:
             # -------------------------------------------------
 
             "outtmpl": outtmpl,
-
             "restrictfilenames": False,
-
             "overwrites": True,
-
             "continuedl": True,
 
             # -------------------------------------------------
@@ -122,15 +118,11 @@ class YoutubeService:
             # -------------------------------------------------
 
             "noplaylist": False,
-
             "ignoreerrors": False,
 
             # -------------------------------------------------
             # JavaScript runtime
             # -------------------------------------------------
-            #
-            # Node.js is installed in Dockerfile.
-            #
 
             "js_runtimes": {
                 "node": {}
@@ -143,7 +135,7 @@ class YoutubeService:
             "extractor_args": self._youtube_extractor_args(),
 
             # -------------------------------------------------
-            # Remote EJS components
+            # EJS
             # -------------------------------------------------
 
             "remote_components": {
@@ -151,30 +143,19 @@ class YoutubeService:
             },
 
             # -------------------------------------------------
-            # PO Token provider
-            # -------------------------------------------------
-            #
-            # bgutil HTTP server:
-            #
-            # 127.0.0.1:4416
-            #
-
-            # -------------------------------------------------
             # Network
             # -------------------------------------------------
 
             "socket_timeout": 30,
-
             "retries": 5,
-
             "fragment_retries": 5,
 
             "skip_unavailable_fragments": True,
         }
 
-        # -----------------------------------------------------
-        # Tell bgutil where its HTTP server is
-        # -----------------------------------------------------
+        # =====================================================
+        # BGUTIL PO TOKEN PROVIDER
+        # =====================================================
 
         opts["extractor_args"][
             "youtubepot-bgutilhttp"
@@ -182,18 +163,18 @@ class YoutubeService:
             "base_url": POT_PROVIDER_URL
         }
 
-        # -----------------------------------------------------
-        # Cookie
-        # -----------------------------------------------------
+        # =====================================================
+        # COOKIE
+        # =====================================================
 
         cookie = self._cookie_file(user_id)
 
         if cookie:
             opts["cookiefile"] = str(cookie)
 
-        # -----------------------------------------------------
-        # Metadata-only extraction
-        # -----------------------------------------------------
+        # =====================================================
+        # METADATA ONLY
+        # =====================================================
 
         if skip_download:
             opts["skip_download"] = True
@@ -205,12 +186,17 @@ class YoutubeService:
     # GET VIDEO / PLAYLIST INFORMATION
     # =========================================================
 
-    async def get_info(self, url, user_id):
+    async def get_info(
+        self,
+        url,
+        user_id,
+    ):
         """
         Extract YouTube information without downloading.
         """
 
         def work():
+
             opts = self._base_opts(
                 user_id=user_id,
                 outtmpl="%(title)s.%(ext)s",
@@ -244,9 +230,9 @@ class YoutubeService:
             exist_ok=True,
         )
 
-        # -----------------------------------------------------
-        # Playlist filename prefix
-        # -----------------------------------------------------
+        # =====================================================
+        # PLAYLIST PREFIX
+        # =====================================================
 
         marker = (
             f"{playlist_index:02d} - "
@@ -254,9 +240,9 @@ class YoutubeService:
             else ""
         )
 
-        # -----------------------------------------------------
-        # Temporary yt-dlp filename
-        # -----------------------------------------------------
+        # =====================================================
+        # TEMPORARY OUTPUT
+        # =====================================================
 
         outtmpl = str(
             output_dir / "%(title)s.%(ext)s"
@@ -267,6 +253,7 @@ class YoutubeService:
         # =====================================================
 
         def hook(data):
+
             # -------------------------------------------------
             # Cancellation
             # -------------------------------------------------
@@ -338,7 +325,7 @@ class YoutubeService:
             skip_download=False,
         )
 
-        # This method downloads ONE video only.
+        # This call downloads ONE video only.
         opts["noplaylist"] = True
 
         opts["progress_hooks"] = [
@@ -349,7 +336,7 @@ class YoutubeService:
         opts["postprocessors"] = []
 
         # =====================================================
-        # ACTUAL DOWNLOAD
+        # DOWNLOAD
         # =====================================================
 
         def work():
@@ -377,7 +364,7 @@ class YoutubeService:
         )
 
         # =====================================================
-        # CHECK CANCELLATION
+        # CANCELLATION CHECK
         # =====================================================
 
         if cancel_event.is_set():
@@ -449,10 +436,10 @@ class YoutubeService:
         cancel_event,
     ):
         """
-        Download playlist entries.
+        Playlist helper.
 
-        Actual concurrent worker management is handled by
-        services/jobs.py.
+        Actual concurrent worker management is handled
+        by JobManager.
         """
 
         entries = [
