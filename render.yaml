@@ -41,7 +41,7 @@ services:
 
 
       # ======================================================
-      # DOWNLOAD SETTINGS
+      # DOWNLOAD
       # ======================================================
 
       - key: MAX_CONCURRENT
@@ -52,13 +52,12 @@ services:
       # JOB TIMEOUT
       # ======================================================
 
-      # 6 hours
       - key: JOB_TIMEOUT
         value: "21600"
 
 
       # ======================================================
-      # LARGE FILE SPLITTING
+      # LARGE FILE
       # ======================================================
 
       - key: SPLIT_SIZE_GB
@@ -80,6 +79,15 @@ services:
       - key: SELF_PING_ENABLED
         value: "true"
 
-      # 10 minutes
+      # IMPORTANT:
+      # 60 seconds
       - key: SELF_PING_INTERVAL
         value: "60"
+
+
+      # ======================================================
+      # PO TOKEN PROVIDER
+      # ======================================================
+
+      - key: POT_PROVIDER_URL
+        value: "http://127.0.0.1:4416"
