@@ -1,24 +1,43 @@
 import asyncio
+import os
 import threading
 import time
-import os
 import urllib.request
 
 from flask import Flask, jsonify
+
 from bot import run_bot
-from config import SELF_PING_ENABLED, SELF_PING_INTERVAL
+from config import (
+    SELF_PING_ENABLED,
+    SELF_PING_INTERVAL,
+)
+
+
+# ============================================================
+# FLASK APP
+# ============================================================
 
 app = Flask(__name__)
 
+
+# ============================================================
+# HOME
+# ============================================================
 
 @app.get("/")
 def index():
     return "YouTube Audio Bot is running."
 
 
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
 @app.get("/health")
 def health():
-    return jsonify({"status": "ok"})
+    return jsonify({
+        "status": "ok"
+    })
 
 
 # ============================================================
@@ -26,40 +45,76 @@ def health():
 # ============================================================
 
 def self_ping():
+    """
+    Periodically requests our own Render health endpoint.
+
+    This is intended as a lightweight keep-alive mechanism.
+    It does NOT override Render's own service lifecycle policies.
+    """
+
     if not SELF_PING_ENABLED:
         return
 
-    service_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    service_url = os.getenv(
+        "RENDER_EXTERNAL_URL",
+        ""
+    ).strip()
 
     if not service_url:
+        print(
+            "SELF-PING: RENDER_EXTERNAL_URL not available."
+        )
         return
 
-    health_url = service_url.rstrip("/") + "/health"
+    health_url = (
+        service_url.rstrip("/")
+        + "/health"
+    )
 
-    # Give Gunicorn/Flask time to start.
+    # Give Flask/Gunicorn time to start.
     time.sleep(30)
 
     while True:
+
         try:
-            with urllib.request.urlopen(
+
+            request = urllib.request.Request(
                 health_url,
+                headers={
+                    "User-Agent": "YouTubeAudioBot-SelfPing/1.0"
+                }
+            )
+
+            with urllib.request.urlopen(
+                request,
                 timeout=15
             ) as response:
 
-                if response.status != 200:
+                status = response.status
+
+                if status != 200:
                     print(
-                        f"SELF-PING: HTTP {response.status}"
+                        f"SELF-PING: HTTP {status}"
                     )
 
-        except Exception as e:
+        except Exception as exc:
+
             print(
-                f"SELF-PING ERROR: {type(e).__name__}: {e}"
+                f"SELF-PING ERROR: "
+                f"{type(exc).__name__}: {exc}"
             )
 
-        time.sleep(SELF_PING_INTERVAL)
+        time.sleep(
+            SELF_PING_INTERVAL
+        )
 
+
+# ============================================================
+# START SELF PING
+# ============================================================
 
 if SELF_PING_ENABLED:
+
     threading.Thread(
         target=self_ping,
         daemon=True,
@@ -68,11 +123,25 @@ if SELF_PING_ENABLED:
 
 
 # ============================================================
-# TELEGRAM BOT
+# START TELEGRAM BOT
 # ============================================================
 
 def _start_bot():
-    asyncio.run(run_bot())
+
+    try:
+
+        asyncio.run(
+            run_bot()
+        )
+
+    except Exception as exc:
+
+        print(
+            f"TELEGRAM BOT ERROR: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+        raise
 
 
 threading.Thread(
