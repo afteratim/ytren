@@ -3,30 +3,83 @@ services:
     name: youtube-audio-bot
     runtime: docker
     plan: free
+
     envVars:
+
+      # ======================================================
+      # TELEGRAM
+      # ======================================================
+
       - key: BOT_TOKEN
         sync: false
+
       - key: API_ID
         sync: false
+
       - key: API_HASH
         sync: false
+
       - key: OWNER_ID
         sync: false
+
       - key: ALLOWED_USERS
         sync: false
+
       - key: DUMP_CHANNEL_ID
         sync: false
+
+
+      # ======================================================
+      # DIRECTORIES
+      # ======================================================
+
       - key: COOKIE_DIR
         value: /tmp/ytaudio_cookies
+
       - key: DOWNLOAD_DIR
         value: /tmp/ytaudio_downloads
+
+
+      # ======================================================
+      # DOWNLOAD SETTINGS
+      # ======================================================
+
       - key: MAX_CONCURRENT
         value: "2"
+
+
+      # ======================================================
+      # JOB TIMEOUT
+      # ======================================================
+
+      # 6 hours
+      - key: JOB_TIMEOUT
+        value: "21600"
+
+
+      # ======================================================
+      # LARGE FILE SPLITTING
+      # ======================================================
+
       - key: SPLIT_SIZE_GB
         value: "1.9"
-      - key: JOB_TIMEOUT
-        value: "3600"
+
+
+      # ======================================================
+      # FILENAME
+      # ======================================================
+
+      - key: MAX_FILENAME_LEN
+        value: "180"
+
+
+      # ======================================================
+      # SELF PING
+      # ======================================================
+
       - key: SELF_PING_ENABLED
         value: "true"
+
+      # 10 minutes
       - key: SELF_PING_INTERVAL
         value: "60"
