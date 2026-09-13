@@ -1,7 +1,10 @@
 python-telegram-bot==22.5
 pyrogram==2.0.106
 tgcrypto==1.2.5
-yt-dlp
+
+yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
+bgutil-ytdlp-pot-provider
+
 aiofiles
 Flask==3.1.2
 gunicorn==23.0.0
