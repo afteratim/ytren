@@ -12,310 +12,178 @@ class DownloadCancelled(Exception):
 
 
 class YoutubeService:
-
     def __init__(self, download_dir: Path):
-        self.download_dir = Path(download_dir)
+        self.download_dir = download_dir
 
-    # ========================================================
+    # ---------------------------------------------------------
     # COOKIE
-    # ========================================================
+    # ---------------------------------------------------------
 
     def _cookie_file(self, user_id):
-        cookie_dir = Path(
-            os.getenv(
-                "COOKIE_DIR",
-                "/tmp/ytaudio_cookies"
-            )
-        )
-
         path = (
-            cookie_dir
+            Path(os.getenv("COOKIE_DIR", "/tmp/ytaudio_cookies"))
             / str(user_id)
             / "cookies.txt"
         )
 
-        if path.exists() and path.is_file():
-            return path
+        return path if path.exists() else None
 
-        return None
+    # ---------------------------------------------------------
+    # COMMON YOUTUBE OPTIONS
+    # ---------------------------------------------------------
 
-    # ========================================================
-    # COMMON OPTIONS
-    # ========================================================
+    def _youtube_extractor_args(self, use_cookie=False):
+        """
+        Current YouTube extraction strategy.
 
-    def _base_opts(
-        self,
-        user_id,
-        outtmpl,
-        player_clients=None,
-        use_cookie=True,
-    ):
+        We deliberately do NOT use:
+            web
+            web_creator
 
-        opts = {
-            "quiet": True,
-            "no_warnings": False,
-            "noprogress": True,
+        as the only client because current YouTube PO-token/SABR
+        changes can leave no downloadable formats.
 
-            "ignoreerrors": False,
+        mweb is used with the bgutil PO-token provider.
+        web_embedded is kept as a fallback for embeddable videos.
+        """
 
-            "restrictfilenames": False,
-
-            "outtmpl": outtmpl,
-
-            # Do not convert to MP3.
-            # Download the best audio yt-dlp can expose.
-            "format": "bestaudio/best",
-
-            "continuedl": True,
-            "overwrites": True,
+        args = {
+            "youtube": {
+                "player_client": ["mweb", "web_embedded", "default"],
+            }
         }
 
-        # ----------------------------------------------------
-        # COOKIE
-        # ----------------------------------------------------
+        return args
 
-        if use_cookie:
+    def _base_opts(self, user_id, outtmpl, skip_download=False):
+        opts = {
+            # -------------------------------------------------
+            # General
+            # -------------------------------------------------
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
 
-            cookie = self._cookie_file(user_id)
+            # -------------------------------------------------
+            # Audio
+            # -------------------------------------------------
+            #
+            # Prefer a real HTTP audio stream.
+            #
+            # The [protocol^=http] condition prevents yt-dlp
+            # from selecting a SABR-only format that cannot be
+            # downloaded directly.
+            #
+            "format": (
+                "(bestaudio)[protocol^=http]/"
+                "bestaudio/"
+                "best"
+            ),
 
-            if cookie:
-                opts["cookiefile"] = str(cookie)
+            # Do NOT convert audio.
+            # We want the original/best available container.
+            "postprocessors": [],
 
-        # ----------------------------------------------------
-        # EXTRACTOR ARGS
-        # ----------------------------------------------------
+            # -------------------------------------------------
+            # Output
+            # -------------------------------------------------
+            "outtmpl": outtmpl,
+            "restrictfilenames": False,
+            "overwrites": True,
+            "continuedl": True,
 
-        extractor_args = {}
+            # -------------------------------------------------
+            # YouTube
+            # -------------------------------------------------
+            "noplaylist": False,
+            "ignoreerrors": False,
 
-        # Do NOT force mweb globally anymore.
-        #
-        # When player_clients is None, yt-dlp decides which
-        # clients are appropriate.
-        if player_clients:
+            # -------------------------------------------------
+            # JavaScript
+            # -------------------------------------------------
+            #
+            # Node is installed in our Docker image.
+            #
+            "js_runtimes": {
+                "node": {}
+            },
 
-            extractor_args["youtube"] = {
-                "player_client": player_clients,
-            }
+            # -------------------------------------------------
+            # PO Token provider
+            # -------------------------------------------------
+            #
+            # bgutil HTTP server is running on localhost:4416.
+            #
+            "extractor_args": self._youtube_extractor_args(
+                use_cookie=use_cookie
+            ),
 
-        # PO provider.
-        #
-        # The bgutil HTTP provider normally uses
-        # 127.0.0.1:4416 automatically, but we explicitly pass
-        # our configured URL so this also works if changed later.
-        if POT_PROVIDER_URL:
+            # -------------------------------------------------
+            # EJS / remote components
+            # -------------------------------------------------
+            #
+            # Current yt-dlp can use its EJS solver with a JS
+            # runtime. Keeping this enabled improves current
+            # YouTube compatibility.
+            #
+            "remote_components": {
+                "ejs:github"
+            },
 
-            extractor_args["youtubepot-bgutilhttp"] = {
-                "base_url": [
-                    POT_PROVIDER_URL
-                ]
-            }
+            # -------------------------------------------------
+            # Networking
+            # -------------------------------------------------
+            "socket_timeout": 30,
+            "retries": 5,
+            "fragment_retries": 5,
 
-        if extractor_args:
-            opts["extractor_args"] = extractor_args
+            # Don't abort the whole playlist because a single
+            # video has an extraction problem.
+            "skip_unavailable_fragments": True,
+        }
+
+        cookie = self._cookie_file(user_id)
+
+        if cookie:
+            opts["cookiefile"] = str(cookie)
+
+        if skip_download:
+            opts["skip_download"] = True
+            opts["extract_flat"] = False
 
         return opts
 
-    # ========================================================
-    # EXTRACTION ATTEMPTS
-    # ========================================================
+    # ---------------------------------------------------------
+    # EXTRACTION
+    # ---------------------------------------------------------
 
-    def _attempts(self, user_id):
+    async def get_info(self, url, user_id):
         """
-        Extraction/download fallback order.
+        Extract metadata first.
 
-        We deliberately do not rely on one YouTube client.
-
-        Attempt 1:
-            yt-dlp defaults + cookie if available.
-
-        Attempt 2:
-            default + web_embedded + cookie.
-
-        Attempt 3:
-            mweb + default + cookie.
-
-        Attempt 4:
-            yt-dlp defaults WITHOUT cookie.
-
-        Attempt 5:
-            mweb + default WITHOUT cookie.
-
-        This is useful because a cookie can sometimes change
-        which YouTube clients yt-dlp selects.
+        We use the same YouTube configuration as the actual
+        downloader so that the metadata extraction and download
+        don't use completely different clients.
         """
 
-        has_cookie = (
-            self._cookie_file(user_id)
-            is not None
-        )
+        def work():
+            opts = self._base_opts(
+                user_id,
+                "%(title)s.%(ext)s",
+                skip_download=True,
+            )
 
-        attempts = []
-
-        if has_cookie:
-
-            attempts.extend([
-                {
-                    "name": "default-cookie",
-                    "clients": None,
-                    "cookie": True,
-                },
-
-                {
-                    "name": "embedded-cookie",
-                    "clients": [
-                        "default",
-                        "web_embedded",
-                    ],
-                    "cookie": True,
-                },
-
-                {
-                    "name": "mweb-cookie",
-                    "clients": [
-                        "mweb",
-                        "default",
-                    ],
-                    "cookie": True,
-                },
-            ])
-
-        attempts.extend([
-            {
-                "name": "default-no-cookie",
-                "clients": None,
-                "cookie": False,
-            },
-
-            {
-                "name": "mweb-no-cookie",
-                "clients": [
-                    "mweb",
-                    "default",
-                ],
-                "cookie": False,
-            },
-        ])
-
-        return attempts
-
-    # ========================================================
-    # CHECK AVAILABLE AUDIO
-    # ========================================================
-
-    @staticmethod
-    def _has_usable_audio(info):
-        """
-        Check whether yt-dlp actually returned at least one
-        format containing audio.
-        """
-
-        if not info:
-            return False
-
-        formats = info.get("formats") or []
-
-        for fmt in formats:
-
-            acodec = fmt.get("acodec")
-
-            if acodec and acodec != "none":
-                return True
-
-        return False
-
-    # ========================================================
-    # GET INFO
-    # ========================================================
-
-    async def get_info(
-        self,
-        url,
-        user_id
-    ):
-
-        errors = []
-
-        attempts = self._attempts(
-            user_id
-        )
-
-        for attempt in attempts:
-
-            def work():
-
-                opts = self._base_opts(
-                    user_id=user_id,
-                    outtmpl="%(title)s.%(ext)s",
-                    player_clients=attempt["clients"],
-                    use_cookie=attempt["cookie"],
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(
+                    url,
+                    download=False,
                 )
 
-                opts.update({
-                    "skip_download": True,
-                    "extract_flat": False,
-                    "noplaylist": False,
-                })
+        return await asyncio.to_thread(work)
 
-                with yt_dlp.YoutubeDL(
-                    opts
-                ) as ydl:
-
-                    return ydl.extract_info(
-                        url,
-                        download=False
-                    )
-
-            try:
-
-                info = await asyncio.to_thread(
-                    work
-                )
-
-                if not info:
-                    raise RuntimeError(
-                        "YouTube returned no information."
-                    )
-
-                # Playlist itself does not necessarily have
-                # formats. Its entries do.
-                if info.get("_type") in (
-                    "playlist",
-                    "multi_video",
-                ):
-                    return info
-
-                if info.get("entries"):
-                    return info
-
-                if self._has_usable_audio(info):
-                    return info
-
-                errors.append(
-                    f"{attempt['name']}: "
-                    f"no usable audio formats"
-                )
-
-            except Exception as exc:
-
-                errors.append(
-                    f"{attempt['name']}: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-
-        # Keep Telegram error reasonably small.
-        detail = "\n".join(
-            errors[-5:]
-        )
-
-        raise RuntimeError(
-            "YouTube did not return a usable audio format "
-            "after all fallback attempts.\n\n"
-            + detail
-        )
-
-    # ========================================================
+    # ---------------------------------------------------------
     # DOWNLOAD ONE VIDEO
-    # ========================================================
+    # ---------------------------------------------------------
 
     async def download_video(
         self,
@@ -325,16 +193,11 @@ class YoutubeService:
         playlist_index,
         title_hint,
         progress_cb,
-        cancel_event
+        cancel_event,
     ):
-
-        output_dir = Path(
-            output_dir
-        )
-
         output_dir.mkdir(
             parents=True,
-            exist_ok=True
+            exist_ok=True,
         )
 
         marker = (
@@ -343,43 +206,36 @@ class YoutubeService:
             else ""
         )
 
-        errors = []
-
-        attempts = self._attempts(
-            user_id
+        outtmpl = str(
+            output_dir / "%(title)s.%(ext)s"
         )
 
-        # ====================================================
-        # PROGRESS HOOK
-        # ====================================================
+        cookie = self._cookie_file(user_id)
+
+        # -----------------------------------------------------
+        # Progress hook
+        # -----------------------------------------------------
 
         def hook(d):
-
             if cancel_event.is_set():
                 raise DownloadCancelled()
 
-            status = d.get(
-                "status"
-            )
+            status = d.get("status")
 
             if status == "downloading":
-
                 total = (
                     d.get("total_bytes")
-                    or
-                    d.get(
-                        "total_bytes_estimate"
-                    )
+                    or d.get("total_bytes_estimate")
                     or 0
                 )
 
                 done = d.get(
                     "downloaded_bytes",
-                    0
+                    0,
                 )
 
                 percent = (
-                    done * 100 / total
+                    (done * 100 / total)
                     if total
                     else 0
                 )
@@ -389,18 +245,14 @@ class YoutubeService:
                     done,
                     total,
                     d.get("speed"),
-                    d.get("eta")
+                    d.get("eta"),
                 )
 
             elif status == "finished":
-
                 total = (
                     d.get("total_bytes")
-                    or
-                    d.get(
-                        "downloaded_bytes",
-                        0
-                    )
+                    or d.get("total_bytes_estimate")
+                    or 0
                 )
 
                 progress_cb(
@@ -408,203 +260,101 @@ class YoutubeService:
                     total,
                     total,
                     None,
-                    0
+                    0,
                 )
 
-        # ====================================================
-        # TRY EACH YOUTUBE CLIENT STRATEGY
-        # ====================================================
+        # -----------------------------------------------------
+        # yt-dlp options
+        # -----------------------------------------------------
 
-        for attempt in attempts:
+        opts = self._base_opts(
+            user_id,
+            outtmpl,
+            skip_download=False,
+        )
 
-            if cancel_event.is_set():
-                raise DownloadCancelled()
+        opts["noplaylist"] = True
+        opts["progress_hooks"] = [hook]
 
-            # Unique temporary template for each attempt.
-            #
-            # This prevents a failed attempt from being confused
-            # with the successful file from another attempt.
-            attempt_template = str(
-                output_dir
-                / (
-                    f".yt-{attempt['name']}-"
-                    "%(id)s.%(ext)s"
+        # We don't want yt-dlp to perform arbitrary audio
+        # conversion.
+        opts["postprocessors"] = []
+
+        # -----------------------------------------------------
+        # Download
+        # -----------------------------------------------------
+
+        def work():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(
+                    url,
+                    download=True,
                 )
+
+                requested = Path(
+                    ydl.prepare_filename(info)
+                )
+
+                return info, requested
+
+        info, requested = await asyncio.to_thread(
+            work
+        )
+
+        if cancel_event.is_set():
+            raise DownloadCancelled()
+
+        # -----------------------------------------------------
+        # Find downloaded file
+        # -----------------------------------------------------
+
+        if not requested.exists():
+            candidates = [
+                p
+                for p in output_dir.glob("*")
+                if p.is_file()
+            ]
+
+            if not candidates:
+                raise FileNotFoundError(
+                    "yt-dlp completed but no audio file was found."
+                )
+
+            requested = max(
+                candidates,
+                key=lambda p: p.stat().st_mtime,
             )
 
-            def work():
+        # -----------------------------------------------------
+        # Final filename
+        # -----------------------------------------------------
 
-                opts = self._base_opts(
-                    user_id=user_id,
-                    outtmpl=attempt_template,
-                    player_clients=attempt["clients"],
-                    use_cookie=attempt["cookie"],
-                )
+        from utils.files import safe_filename
 
-                opts.update({
-                    "noplaylist": True,
-                    "progress_hooks": [
-                        hook
-                    ],
-                })
-
-                with yt_dlp.YoutubeDL(
-                    opts
-                ) as ydl:
-
-                    info = ydl.extract_info(
-                        url,
-                        download=True
-                    )
-
-                    if not info:
-                        raise RuntimeError(
-                            "YouTube returned no video information."
-                        )
-
-                    requested = Path(
-                        ydl.prepare_filename(
-                            info
-                        )
-                    )
-
-                    return (
-                        info,
-                        requested
-                    )
-
-            try:
-
-                info, requested = (
-                    await asyncio.to_thread(
-                        work
-                    )
-                )
-
-                if cancel_event.is_set():
-                    raise DownloadCancelled()
-
-                # --------------------------------------------
-                # LOCATE ACTUAL DOWNLOADED FILE
-                # --------------------------------------------
-
-                if not requested.exists():
-
-                    video_id = (
-                        info.get("id")
-                        or ""
-                    )
-
-                    candidates = [
-                        p
-                        for p in output_dir.glob(
-                            f".yt-{attempt['name']}-{video_id}.*"
-                        )
-                        if (
-                            p.is_file()
-                            and
-                            not p.name.endswith(
-                                ".part"
-                            )
-                        )
-                    ]
-
-                    if not candidates:
-
-                        raise FileNotFoundError(
-                            "yt-dlp reported completion "
-                            "but the audio file was not found."
-                        )
-
-                    requested = max(
-                        candidates,
-                        key=lambda p:
-                        p.stat().st_mtime
-                    )
-
-                # --------------------------------------------
-                # FINAL FILENAME
-                # --------------------------------------------
-
-                from utils.files import (
-                    safe_filename,
-                    unique_path,
-                )
-
-                title = (
-                    title_hint
-                    or
-                    info.get("title")
-                    or
-                    requested.stem
-                )
-
-                final_name = safe_filename(
-                    f"{marker}"
-                    f"{title}"
-                    f"{requested.suffix}"
-                )
-
-                final = unique_path(
-                    output_dir
-                    / final_name
-                )
-
-                if (
-                    requested.resolve()
-                    !=
-                    final.resolve()
-                ):
-
-                    requested.rename(
-                        final
-                    )
-
-                return (
-                    final,
-                    info
-                )
-
-            except DownloadCancelled:
-                raise
-
-            except Exception as exc:
-
-                errors.append(
-                    f"{attempt['name']}: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-
-                # Clean only temporary files belonging to
-                # this failed attempt.
-                for temp in output_dir.glob(
-                    f".yt-{attempt['name']}-*"
-                ):
-
-                    try:
-
-                        if temp.is_file():
-                            temp.unlink()
-
-                    except OSError:
-                        pass
-
-        # ====================================================
-        # ALL ATTEMPTS FAILED
-        # ====================================================
-
-        detail = "\n".join(
-            errors[-5:]
+        title = (
+            title_hint
+            or info.get("title")
+            or requested.stem
         )
 
-        raise RuntimeError(
-            "All YouTube audio download methods failed.\n\n"
-            + detail
+        final_name = safe_filename(
+            f"{marker}{title}{requested.suffix}"
         )
 
-    # ========================================================
-    # DOWNLOAD PLAYLIST
-    # ========================================================
+        final = output_dir / final_name
+
+        if requested.resolve() != final.resolve():
+
+            if final.exists():
+                final.unlink()
+
+            requested.rename(final)
+
+        return final, info
+
+    # ---------------------------------------------------------
+    # PLAYLIST
+    # ---------------------------------------------------------
 
     async def download_playlist(
         self,
@@ -612,59 +362,41 @@ class YoutubeService:
         user_id,
         output_dir,
         worker_submit,
-        cancel_event
+        cancel_event,
     ):
-
         entries = [
             entry
-            for entry in (
-                info.get("entries")
-                or []
-            )
+            for entry in (info.get("entries") or [])
             if entry
         ]
 
         results = []
 
-        total = len(
-            entries
-        )
-
         for index, entry in enumerate(
             entries,
-            1
+            1,
         ):
-
             if cancel_event.is_set():
                 break
 
             url = (
-                entry.get(
-                    "webpage_url"
-                )
-                or
-                entry.get(
-                    "original_url"
-                )
-                or
-                entry.get("url")
+                entry.get("webpage_url")
+                or entry.get("original_url")
+                or entry.get("url")
             )
 
             title = (
                 entry.get("title")
-                or
-                f"Audio {index:02d}"
+                or f"Audio {index:02d}"
             )
 
             result = await worker_submit(
                 url,
                 index,
-                total,
-                title
+                len(entries),
+                title,
             )
 
-            results.append(
-                result
-            )
+            results.append(result)
 
         return results
