@@ -7,6 +7,7 @@ import urllib.request
 from flask import Flask, jsonify
 
 from bot import run_bot
+
 from config import (
     SELF_PING_ENABLED,
     SELF_PING_INTERVAL,
@@ -14,7 +15,7 @@ from config import (
 
 
 # ============================================================
-# FLASK APP
+# FLASK
 # ============================================================
 
 app = Flask(__name__)
@@ -26,15 +27,17 @@ app = Flask(__name__)
 
 @app.get("/")
 def index():
+
     return "YouTube Audio Bot is running."
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
 @app.get("/health")
 def health():
+
     return jsonify({
         "status": "ok"
     })
@@ -45,12 +48,6 @@ def health():
 # ============================================================
 
 def self_ping():
-    """
-    Periodically requests our own Render health endpoint.
-
-    This is intended as a lightweight keep-alive mechanism.
-    It does NOT override Render's own service lifecycle policies.
-    """
 
     if not SELF_PING_ENABLED:
         return
@@ -61,9 +58,12 @@ def self_ping():
     ).strip()
 
     if not service_url:
+
         print(
-            "SELF-PING: RENDER_EXTERNAL_URL not available."
+            "SELF-PING: "
+            "RENDER_EXTERNAL_URL not available."
         )
+
         return
 
     health_url = (
@@ -71,7 +71,7 @@ def self_ping():
         + "/health"
     )
 
-    # Give Flask/Gunicorn time to start.
+    # Wait for Gunicorn/Flask.
     time.sleep(30)
 
     while True:
@@ -81,7 +81,8 @@ def self_ping():
             request = urllib.request.Request(
                 health_url,
                 headers={
-                    "User-Agent": "YouTubeAudioBot-SelfPing/1.0"
+                    "User-Agent":
+                    "YouTubeAudioBot-SelfPing/1.0"
                 }
             )
 
@@ -90,11 +91,11 @@ def self_ping():
                 timeout=15
             ) as response:
 
-                status = response.status
+                if response.status != 200:
 
-                if status != 200:
                     print(
-                        f"SELF-PING: HTTP {status}"
+                        f"SELF-PING: "
+                        f"HTTP {response.status}"
                     )
 
         except Exception as exc:
