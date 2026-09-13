@@ -42,3 +42,16 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 COOKIE_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_FILENAME_LEN = 180
+
+# ============================================================
+# SELF PING
+# ============================================================
+
+SELF_PING_ENABLED = os.getenv("SELF_PING_ENABLED", "true").lower() in (
+    "1", "true", "yes", "on"
+)
+
+SELF_PING_INTERVAL = max(
+    60,
+    _int("SELF_PING_INTERVAL", 60)
+)
