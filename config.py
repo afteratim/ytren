@@ -55,3 +55,8 @@ SELF_PING_INTERVAL = max(
     60,
     _int("SELF_PING_INTERVAL", 60)
 )
+
+JOB_TIMEOUT = max(
+    60,
+    _int("JOB_TIMEOUT", 21600)
+)
