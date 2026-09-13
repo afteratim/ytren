@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: youtube-audio-bot
+    runtime: docker
+    plan: free
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: ALLOWED_USERS
+        sync: false
+      - key: DUMP_CHANNEL_ID
+        sync: false
+      - key: COOKIE_DIR
+        value: /tmp/ytaudio_cookies
+      - key: DOWNLOAD_DIR
+        value: /tmp/ytaudio_downloads
+      - key: MAX_CONCURRENT
+        value: "2"
+      - key: SPLIT_SIZE_GB
+        value: "1.9"
+      - key: JOB_TIMEOUT
+        value: "3600"
