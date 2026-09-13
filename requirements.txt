@@ -2,7 +2,7 @@ python-telegram-bot==22.5
 pyrogram==2.0.106
 tgcrypto==1.2.5
 
-yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
+yt-dlp[default]
 bgutil-ytdlp-pot-provider
 
 aiofiles
